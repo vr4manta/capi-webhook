@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capi-machine-webhook
+  namespace: capi-machine-webhook
+  labels:
+    k8s-app: capi-machine-webhook
+  annotations:
+    exclude.release.openshift.io/internal-openshift-hosted: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: capi-machine-webhook
+  template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+        kubectl.kubernetes.io/default-container: capi-machine-webhook
+      labels:
+        k8s-app: capi-machine-webhook
+    spec:
+      priorityClassName: system-node-critical
+      serviceAccountName: capi-machine-webhook
+      containers:
+        - name: capi-machine-webhook
+          image: quay.io/ocp-splat/capi-webhook:latest
+          imagePullPolicy: Always
+          command:
+            - "/capi-webhook"
+          args:
+            - "--logtostderr=true"
+            - "--v=3"
+            - "--leader-elect=true"
+            - "--leader-elect-lease-duration=120s"
+          ports:
+            - containerPort: 8443
+              name: webhook-server
+            - containerPort: 9440
+              name: healthz
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /readyz
+              port: healthz
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: healthz
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            requests:
+              memory: 20Mi
+              cpu: 10m
+          volumeMounts:
+            - mountPath: /etc/capi-webhook/tls
+              name: capi-webhook-tls
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      restartPolicy: Always
+      tolerations:
+        - key: "node-role.kubernetes.io/master"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 120
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 120
+      volumes:
+        - name: capi-webhook-tls
+          secret:
+            defaultMode: 420
+            secretName: capi-machine-webhook-cert
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+
