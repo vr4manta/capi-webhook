@@ -12,6 +12,11 @@ webhooks:
         operations:  ["CREATE", "UPDATE"]
         resources:   ["machines/status"]
         scope:       "*"
+      - apiGroups:   ["cluster.x-k8s.io"]
+        apiVersions: ["v1beta1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["machines"]
+        scope:       "*"
     clientConfig:
       service:
         namespace: "capi-machine-webhook"

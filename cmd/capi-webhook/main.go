@@ -132,7 +132,7 @@ func main() {
 	}
 
 	// Enable defaulting and validating webhooks
-	machineDefaulter, err := capiwebhooks.NewMachineDefaulter()
+	machineDefaulter, err := capiwebhooks.NewMachineDefaulter(mgr.GetClient())
 	if err != nil {
 		log.Fatal(err)
 	}
