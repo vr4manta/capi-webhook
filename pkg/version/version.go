@@ -2,6 +2,7 @@ package version
 
 import (
 	"fmt"
+
 	"k8s.io/apimachinery/pkg/version"
 )
 

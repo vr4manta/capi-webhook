@@ -3,6 +3,8 @@ package webhooks
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+
 	machinev1beta1 "github.com/openshift/api/machine/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,7 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-	"net/http"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -34,6 +35,10 @@ type admissionHandler struct {
 	*admissionConfig
 	decoder *admission.Decoder
 }
+
+var (
+	clientCache = make(map[string]*kubernetes.Clientset)
+)
 
 // InjectDecoder injects the decoder.
 func (a *admissionHandler) InjectDecoder(d *admission.Decoder) error {
@@ -58,6 +63,10 @@ func createMachineDefaulter(client client.Client) *machineDefaulterHandler {
 // Handle handles HTTP requests for admission webhook servers.
 func (h *machineDefaulterHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
 	klog.Infof("Got request to Handle: %v", req.Name)
+
+	if req.Name == "" {
+		klog.Infof("Got early webhook notification.  Ignoring.")
+	}
 
 	machine := &clusterv1.Machine{}
 	if err := h.decoder.Decode(req, machine); err != nil {
@@ -111,26 +120,69 @@ func checkInternalDNS(machine *clusterv1.Machine) bool {
 }
 
 func checkNodeRef(context context.Context, client client.Client, machine *clusterv1.Machine) bool {
+	// Check to see if nodeRef is set.
+	if machine.Status.NodeRef != nil {
+		klog.Infof("NodeRef is not nil.  Aborting check.")
+		return false
+	}
+
 	nodeID := machine.Name
 	hyperProj := machine.Namespace
+	klog.Infof("Checking nodeRef for %v in cluster %v", nodeID, hyperProj)
 
 	node := &corev1.Node{}
-	/*nodeKey := types.NamespacedName{
-		Name: machine.Name,
-	}*/
 
-	// Get kubeconfig secret
+	// Create client for hypershift cluster
+	clientset, err := getClient(context, client, hyperProj)
+
+	// Get Node info
+	node, err = clientset.CoreV1().Nodes().Get(context, nodeID, metav1.GetOptions{})
+	if err != nil {
+		klog.Infof("Node Err: %v", err)
+		klog.Info("Unable to find node.  Starting watcher.")
+
+		// Node not found.  Let's watch it to perform a manual update since we are not sure how often webhook
+		// will be called to allow us to check for node creation.
+		WatchNode(client, clientset, hyperProj, nodeID)
+
+		return false
+	}
+
+	// If node found, set the status
+	if node != nil {
+		klog.Infof("Got node: %v", node.Name)
+		StopWatchingNode(hyperProj, nodeID)
+		machine.Status.NodeRef = &corev1.ObjectReference{
+			Kind: "Node",
+			Name: nodeID,
+			UID:  node.UID,
+		}
+		return true
+	}
+
+	return false
+}
+
+func getClient(context context.Context, client client.Client, cluster string) (*kubernetes.Clientset, error) {
+	// Check client cache
+	clientSet, ok := clientCache[cluster]
+	if ok {
+		klog.Infof("Found cached client.")
+		return clientSet, nil
+	}
+
+	// If no client found, create one
 	secret := &corev1.Secret{}
 	secretKey := types.NamespacedName{
 		Name:      "admin-kubeconfig",
-		Namespace: hyperProj,
+		Namespace: cluster,
 	}
 
-	klog.Infof("Loading secret admin-kubeconfig in namespace %v", hyperProj)
+	klog.Infof("Loading secret admin-kubeconfig in namespace %v", cluster)
 	err := client.Get(context, secretKey, secret)
 	if err != nil {
 		klog.Warningf("Unable to get kubeconfig for hypershift cluster: %v", err)
-		return false
+		return nil, err
 	}
 
 	// Create kubeconfig
@@ -141,25 +193,11 @@ func checkNodeRef(context context.Context, client client.Client, machine *cluste
 	}
 
 	// Create client for hypershift cluster
-	clientset, err := kubernetes.NewForConfig(config)
-
-	// Get Node info
-	node, err = clientset.CoreV1().Nodes().Get(context, nodeID, metav1.GetOptions{})
+	clientSet, err = kubernetes.NewForConfig(config)
 	if err != nil {
-		klog.Infof("Node Err: %v", err)
-		klog.Info("Unable to find node.  Update skipped.")
-		return false
+		klog.Warningf("Unable to create client: %v", err)
+		return nil, err
 	}
-
-	// If node found, set the status
-	if node != nil {
-		klog.Infof("Got node: %v", node.Name)
-		machine.Status.NodeRef = &corev1.ObjectReference{
-			Kind: "Node",
-			Name: nodeID,
-			UID:  node.UID,
-		}
-		return true
-	}
-	return false
+	clientCache[cluster] = clientSet
+	return clientSet, err
 }
