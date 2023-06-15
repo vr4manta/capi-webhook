@@ -16,11 +16,11 @@ import (
 )
 
 type NodeWatcher struct {
-	client    client.Client
-	informer  *cache.SharedIndexInformer
-	nodeList  []string
+	Client    client.Client
+	Informer  cache.SharedInformer
+	NodeList  []string
 	clusterID string
-	stop      chan struct{}
+	Stop      chan struct{}
 }
 
 var (
@@ -33,8 +33,8 @@ func WatchNode(client client.Client, clientset *kubernetes.Clientset, clusterNam
 	if !ok {
 		klog.Info("Creating watcher")
 		watcher = &NodeWatcher{
-			client:    client,
-			nodeList:  []string{},
+			Client:    client,
+			NodeList:  []string{},
 			clusterID: clusterName,
 		}
 
@@ -49,39 +49,39 @@ func WatchNode(client client.Client, clientset *kubernetes.Clientset, clusterNam
 			klog.Warningf("Unable to create informer: %v", err)
 			return
 		}
-		watcher.informer = &nodeInformer
+		watcher.Informer = nodeInformer
 		informerMap[clusterName] = watcher
 
-		watcher.stop = make(chan struct{})
+		watcher.Stop = make(chan struct{})
 		// TODO: perform stop when shutting down goroutine or when listener list is empty
-		kubeInformerFactory.Start(watcher.stop)
+		kubeInformerFactory.Start(watcher.Stop)
 	}
 
 	// If current nodeList does not contain nodeName, add it.
 	klog.Infof("Checking to see if node %v is already being watched.", nodeName)
-	if !contains(watcher.nodeList, nodeName) {
+	if !contains(watcher.NodeList, nodeName) {
 		klog.Infof("Adding node %v to the watch list", nodeName)
-		watcher.nodeList = append(watcher.nodeList, nodeName)
+		watcher.NodeList = append(watcher.NodeList, nodeName)
 	}
 }
 
 func StopWatchingNode(clusterName, nodeName string) {
-	klog.Infof("Attempting to remove node %v from watch list", nodeName)
+	klog.V(4).Infof("Attempting to remove node %v from watch list", nodeName)
 	watcher, ok := informerMap[clusterName]
 	if ok {
-		for index, node := range watcher.nodeList {
+		for index, node := range watcher.NodeList {
 			if node == nodeName {
-				watcher.nodeList[index] = watcher.nodeList[len(watcher.nodeList)-1]
-				watcher.nodeList = watcher.nodeList[:len(watcher.nodeList)-1]
+				watcher.NodeList[index] = watcher.NodeList[len(watcher.NodeList)-1]
+				watcher.NodeList = watcher.NodeList[:len(watcher.NodeList)-1]
 				klog.Infof("Node %v has been removed from watch list", nodeName)
 				break
 			}
 		}
 
-		if len(watcher.nodeList) == 0 {
+		if len(watcher.NodeList) == 0 {
 			klog.Infof("Removing watcher")
 			delete(informerMap, clusterName)
-			defer close(watcher.stop)
+			defer close(watcher.Stop)
 		}
 	}
 }
@@ -90,7 +90,7 @@ func (n *NodeWatcher) nodeAdded(obj interface{}) {
 	node := obj.(*v1.Node)
 	klog.Infof("Got add event for node %v", node.Name)
 
-	if contains(n.nodeList, node.Name) {
+	if contains(n.NodeList, node.Name) {
 		klog.Info("Received add event for a watched node.")
 		machine := &clusterv1.Machine{}
 		machineInfo := types.NamespacedName{
@@ -99,7 +99,7 @@ func (n *NodeWatcher) nodeAdded(obj interface{}) {
 		}
 
 		klog.Infof("Getting machine for node %v", node.Name)
-		err := n.client.Get(context.TODO(), machineInfo, machine)
+		err := n.Client.Get(context.TODO(), machineInfo, machine)
 		if err != nil {
 			klog.Errorf("Unable to get machine for node %v: %v", node.Name, err)
 			return
@@ -111,7 +111,7 @@ func (n *NodeWatcher) nodeAdded(obj interface{}) {
 		}
 
 		klog.Infof("Updating nodeRef for machine %v", node.Name)
-		err = n.client.Status().Update(context.TODO(), machine)
+		err = n.Client.Status().Update(context.TODO(), machine)
 		if err != nil {
 			klog.Errorf("Unable to update machine nodeRef for %v: %v", node.Name, err)
 		} else {
@@ -127,7 +127,7 @@ func (n *NodeWatcher) nodeDeleted(obj interface{}) {
 	node := obj.(*v1.Node)
 	klog.Infof("Got delete event for node %v", node.Name)
 
-	if contains(n.nodeList, node.Name) {
+	if contains(n.NodeList, node.Name) {
 		klog.Info("Received delete event for a watched node.")
 		StopWatchingNode(n.clusterID, node.Name)
 

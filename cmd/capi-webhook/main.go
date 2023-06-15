@@ -3,24 +3,24 @@ package main
 import (
 	"flag"
 	"fmt"
-	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/library-go/pkg/config/leaderelection"
-	"github.com/vr4manta/capi-webhook/pkg/util"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog/v2"
 	"log"
 	"os"
+	"time"
+
+	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/config/leaderelection"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"time"
-
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"github.com/vr4manta/capi-webhook/pkg/util"
 	"github.com/vr4manta/capi-webhook/pkg/version"
 	capiwebhooks "github.com/vr4manta/capi-webhook/pkg/webhook"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 const (
@@ -132,7 +132,7 @@ func main() {
 	}
 
 	// Enable defaulting and validating webhooks
-	machineDefaulter, err := capiwebhooks.NewMachineDefaulter(mgr.GetClient())
+	machineDefaulter, err := capiwebhooks.NewMachineDefaulter(mgr.GetClient(), cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
